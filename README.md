@@ -1,12 +1,27 @@
 # zig_c_sdl3
 
+# License: MIT
+
+# Libraries:
+- SDL 3.4.12
+- ziglua#d59103e257b25ae892cdede9a671366e8d4f3e51
+
+# Zig:
+- 0.16.0
+
 # Information:
   This sample project test for Zig 0.16.0, SDL 3.4.12 and other libs to check.
 
   To test vulkan set up in gpu api SDL 3.
 
+# Examples:
+- triangle 2d
+- cube color
+- cube texture for png
+- sdl window frame test
+- sdl debug text test
 
-# shader:
+# shader.bat:
 ```
 @echo off
 

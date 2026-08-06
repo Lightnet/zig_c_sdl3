@@ -6,8 +6,7 @@ const c = @cImport({
 
 const Vertex = struct {
     pos: [3]f32,
-    color: [3]f32, // keep for now (or remove later)
-    uv: [2]f32,
+    color: [3]f32,
 };
 
 const UniformBufferObject = struct {
@@ -44,8 +43,6 @@ fn loadShader(
 
     if (stage == c.SDL_GPU_SHADERSTAGE_VERTEX) {
         info.num_uniform_buffers = 1;
-    } else if (stage == c.SDL_GPU_SHADERSTAGE_FRAGMENT) {
-        info.num_samplers = 1; // ← important
     }
 
     return c.SDL_CreateGPUShader(device, &info) orelse {
@@ -54,106 +51,148 @@ fn loadShader(
     };
 }
 
-fn loadTexture(device: *c.SDL_GPUDevice, path: [:0]const u8) !*c.SDL_GPUTexture {
-    // 1. Load the image file directly into an SDL_Surface
-    const raw_surface = c.SDL_LoadPNG(path.ptr) orelse {
-        std.log.err("Failed to load image {s}: {s}", .{ path, c.SDL_GetError() });
-        return error.ImageLoadFailed;
-    };
-    defer c.SDL_DestroySurface(raw_surface);
+// fn createMVP(angle: f32) [4][4]f32 {
+//     const rad = angle * (std.math.pi / 180.0);
+//     const c_a = @cos(rad);
+//     const s_a = @sin(rad);
 
-    // 2. FORCE format conversion to standard ABGR8888 (matches SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM)
-    // This guarantees your PNG data matches the GPU layout regardless of how the PNG was encoded.
-    const surface = c.SDL_ConvertSurface(raw_surface, c.SDL_PIXELFORMAT_ABGR8888) orelse {
-        std.log.err("Failed to convert surface format: {s}", .{c.SDL_GetError()});
-        return error.SurfaceConversionFailed;
-    };
-    defer c.SDL_DestroySurface(surface);
+//     // Improved matrix - should show a nice rotating cube
+//     return .{
+//         .{ 1.5 * c_a, 0.0, 1.5 * s_a, 0.0 },
+//         .{ 0.0, 1.5, 0.0, 0.0 },
+//         .{ -0.8 * s_a, 0.0, 0.8 * c_a, -0.4 },
+//         .{ 0.0, 0.0, -3.0, 1.0 },
+//     };
+// }
 
-    // 3. Define the texture description
-    const tex_desc = c.SDL_GPUTextureCreateInfo{
-        .type = c.SDL_GPU_TEXTURETYPE_2D,
-        .format = c.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
-        .usage = c.SDL_GPU_TEXTUREUSAGE_SAMPLER,
-        .width = @intCast(surface.*.w),
-        .height = @intCast(surface.*.h),
-        .layer_count_or_depth = 1,
-        .num_levels = 1,
-        .sample_count = c.SDL_GPU_SAMPLECOUNT_1,
-    };
+// fn createMVP(angle: f32) [4][4]f32 {
+//     const rad = angle * (std.math.pi / 180.0);
+//     const cc = @cos(rad);
+//     const s = @sin(rad);
+//     // Model: rotate around Y
+//     const model = [4][4]f32{
+//         .{ cc, 0.0, s, 0.0 },
+//         .{ 0.0, 1.0, 0.0, 0.0 },
+//         .{ -s, 0.0, cc, 0.0 },
+//         .{ 0.0, 0.0, 0.0, 1.0 },
+//     };
+//     // View: move camera back along Z
+//     const view_z = -4.0;
+//     const view = [4][4]f32{
+//         .{ 1, 0, 0, 0 },
+//         .{ 0, 1, 0, 0 },
+//         .{ 0, 0, 1, view_z },
+//         .{ 0, 0, 0, 1 },
+//     };
+//     // Simple Perspective Projection
+//     const aspect = 800.0 / 600.0;
+//     const fov_scale = 1.0; // roughly 60-70° FOV
+//     const near = 0.5;
+//     const far = 20.0;
+//     const proj = [4][4]f32{
+//         .{ fov_scale / aspect, 0.0, 0.0, 0.0 },
+//         .{ 0.0, fov_scale, 0.0, 0.0 },
+//         .{ 0.0, 0.0, (far + near) / (near - far), (2.0 * far * near) / (near - far) },
+//         .{ 0.0, 0.0, -1.0, 0.0 },
+//     };
+//     // proj * view * model
+//     var mvp: [4][4]f32 = .{ .{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 }, .{ 0, 0, 0, 0 } };
+//     // First view * model
+//     var tmp: [4][4]f32 = undefined;
+//     for (0..4) |i| for (0..4) |j| {
+//         tmp[i][j] = 0;
+//         for (0..4) |k| tmp[i][j] += view[i][k] * model[k][j];
+//     };
+//     // Then proj * tmp
+//     for (0..4) |i| for (0..4) |j| {
+//         for (0..4) |k| mvp[i][j] += proj[i][k] * tmp[k][j];
+//     };
+//     return mvp;
+// }
 
-    const texture = c.SDL_CreateGPUTexture(device, &tex_desc) orelse {
-        std.log.err("Failed to create GPU texture: {s}", .{c.SDL_GetError()});
-        return error.TextureCreationFailed;
-    };
+//vulkan
+// pub fn createMVP(angle_deg: f32, cam_x: f32, cam_y: f32, cam_z: f32) Mat4 {
+//     const rad = angle_deg * (std.math.pi / 180.0);
+//     const cc = @cos(rad);
+//     const s = @sin(rad);
 
-    // 4. Create a transfer buffer to move pixels to the GPU
-    const image_size: u32 = @intCast(surface.*.pitch * surface.*.h);
-    const buffer_desc = c.SDL_GPUTransferBufferCreateInfo{
-        .usage = c.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD,
-        .size = image_size,
-    };
+//     // Model: Rotate Y
+//     const model = [4][4]f32{
+//         .{ cc, 0.0, s, 0.0 },
+//         .{ 0.0, 1.0, 0.0, 0.0 },
+//         .{ -s, 0.0, cc, 0.0 },
+//         .{ 0.0, 0.0, 0.0, 1.0 },
+//     };
 
-    const transfer_buffer = c.SDL_CreateGPUTransferBuffer(device, &buffer_desc) orelse {
-        c.SDL_ReleaseGPUTexture(device, texture);
-        std.log.err("Failed to create transfer buffer: {s}", .{c.SDL_GetError()});
-        return error.TransferBufferCreationFailed;
-    };
-    // This defer is now safe because we block until completion below
-    defer c.SDL_ReleaseGPUTransferBuffer(device, transfer_buffer);
+//     // View: Invert camera position coordinates for world translation
+//     const view = [4][4]f32{
+//         .{ 1.0, 0.0, 0.0, 0.0 },
+//         .{ 0.0, 1.0, 0.0, 0.0 },
+//         .{ 0.0, 0.0, 1.0, 0.0 },
+//         .{ -cam_x, -cam_y, -cam_z, 1.0 },
+//     };
 
-    // 5. Copy surface pixels into the transfer buffer
-    const buffer_ptr = c.SDL_MapGPUTransferBuffer(device, transfer_buffer, false);
-    if (buffer_ptr == null) {
-        c.SDL_ReleaseGPUTexture(device, texture);
-        return error.TransferBufferMapFailed;
-    }
-    @memcpy(@as([*]u8, @ptrCast(buffer_ptr))[0..image_size], @as([*]const u8, @ptrCast(surface.*.pixels))[0..image_size]);
-    c.SDL_UnmapGPUTransferBuffer(device, transfer_buffer);
+//     // Projection: Explicitly built for Vulkan's [0.0 to 1.0] Z depth buffer range
+//     const aspect = 800.0 / 600.0;
+//     const fov_scale = 1.732; // ~60 degree horizontal Field of View
+//     const near = 0.1;
+//     const far = 100.0;
+//     const proj = [4][4]f32{
+//         .{ fov_scale / aspect, 0.0, 0.0, 0.0 },
+//         .{ 0.0, fov_scale, 0.0, 0.0 },
+//         .{ 0.0, 0.0, far / (near - far), -1.0 },
+//         .{ 0.0, 0.0, (far * near) / (near - far), 0.0 },
+//     };
 
-    // 6. Submit the upload command via a command buffer
-    const cmd = c.SDL_AcquireGPUCommandBuffer(device) orelse {
-        c.SDL_ReleaseGPUTexture(device, texture);
-        return error.CommandBufferAcquisitionFailed;
-    };
+//     // Row-Major Matrix multiplication calculations
+//     var tmp: [4][4]f32 = undefined;
+//     for (0..4) |i| {
+//         for (0..4) |j| {
+//             var sum: f32 = 0.0;
+//             for (0..4) |k| {
+//                 sum += view[i][k] * model[k][j];
+//             }
+//             tmp[i][j] = sum;
+//         }
+//     }
 
-    const copy_pass = c.SDL_BeginGPUCopyPass(cmd);
+//     var row_major_mvp: [4][4]f32 = undefined;
+//     for (0..4) |i| {
+//         for (0..4) |j| {
+//             var sum: f32 = 0.0;
+//             for (0..4) |k| {
+//                 sum += proj[i][k] * tmp[k][j];
+//             }
+//             row_major_mvp[i][j] = sum;
+//         }
+//     }
 
-    const source = c.SDL_GPUTextureTransferInfo{
-        .transfer_buffer = transfer_buffer,
-        .offset = 0,
-        .pixels_per_row = @intCast(surface.*.w), // Explicit row stride configuration
-        .rows_per_layer = @intCast(surface.*.h),
-    };
+//     // CRITICAL VULKAN STEP: Transpose the final Row-Major matrix
+//     // into Column-Major memory storage so SPIR-V maps it correctly.
+//     var final_mvp: Mat4 = undefined;
+//     for (0..4) |i| {
+//         for (0..4) |j| {
+//             final_mvp.data[i][j] = row_major_mvp[j][i];
+//         }
+//     }
 
-    const destination = c.SDL_GPUTextureRegion{
-        .texture = texture,
-        .w = @intCast(surface.*.w),
-        .h = @intCast(surface.*.h),
-        .d = 1, // Depth layer count (1 for normal 2D images)
-        .mip_level = 0,
-        .x = 0,
-        .y = 0,
-        .z = 0,
-    };
+//     // MANUALLY SHRINK THE ENTIRE OUTPUT SCENE BY 50%
+//     // final_mvp.data[0][0] *= 0.001; // Scale X
+//     // final_mvp.data[1][1] *= 0.001; // Scale Y
+//     // final_mvp.data[2][2] *= 0.001; // Scale Z
 
-    c.SDL_UploadToGPUTexture(copy_pass, &source, &destination, false);
-    c.SDL_EndGPUCopyPass(copy_pass);
+//     // MANUALLY OVERRIDE CAMERA TRANSLATION (Column 3 holds X, Y, Z translation)
+//     // final_mvp.data[3][0] = -10.0; // Manually shift X axis (Left / Right)
+//     // final_mvp.data[3][1] = -10.0; // Manually shift Y axis (Up / Down)
+//     // final_mvp.data[3][2] = -10.0; // Manually shift Z axis (Push camera back to 5.0)
+//     // final_mvp.data[3][3] = 1.0; // W component must remain 1.0
 
-    // === CRITICAL FIX ===
-    // Submit commands and fetch a fence. If we don't block here, the transfer_buffer
-    // will be released by the defer block while the GPU is still copying out of it!
-    const fence = c.SDL_SubmitGPUCommandBufferAndAcquireFence(cmd) orelse {
-        c.SDL_ReleaseGPUTexture(device, texture);
-        return error.SubmitFailed;
-    };
+//     // final_mvp.data[3][1] = 0.01;
 
-    // Halt CPU thread until GPU acknowledges transfer completion
-    _ = c.SDL_WaitForGPUFences(device, true, &fence, 1);
-    c.SDL_ReleaseGPUFence(device, fence);
+//     final_mvp.data[3][2] = -10.0; // Manually shift Z axis (Push camera back to 5.0)
 
-    return texture;
-}
+//     return final_mvp;
+// }
 
 pub fn createMVP(angle_deg: f32) Mat4 {
     const rad = angle_deg * (@as(f32, @floatCast(std.math.pi)) / 180.0);
@@ -271,82 +310,31 @@ pub fn main(init: std.process.Init) !void {
     if (!c.SDL_ClaimWindowForGPUDevice(gpu_device, window)) return error.ClaimWindowFailed;
     defer c.SDL_ReleaseWindowFromGPUDevice(gpu_device, window);
 
-    // sampler
-
-    var sampler_info = std.mem.zeroes(c.SDL_GPUSamplerCreateInfo);
-    sampler_info.min_filter = c.SDL_GPU_FILTER_LINEAR;
-    sampler_info.mag_filter = c.SDL_GPU_FILTER_LINEAR;
-    sampler_info.mipmap_mode = c.SDL_GPU_SAMPLERMIPMAPMODE_LINEAR;
-    sampler_info.address_mode_u = c.SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
-    sampler_info.address_mode_v = c.SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
-    sampler_info.address_mode_w = c.SDL_GPU_SAMPLERADDRESSMODE_REPEAT;
-
-    const sampler = c.SDL_CreateGPUSampler(gpu_device, &sampler_info) orelse {
-        std.log.err("CreateGPUSampler failed: {s}", .{c.SDL_GetError()});
-        return error.SamplerFailed;
-    };
-    defer c.SDL_ReleaseGPUSampler(gpu_device, sampler);
-
-    // texture
-
-    // After creating gpu_device / shaders / buffers …
-    const ctexture = try loadTexture(gpu_device, "assets/floor_stone.png");
-    defer c.SDL_ReleaseGPUTexture(gpu_device, ctexture);
-
-    // shaders
-
-    const vert_shader = try loadShader(io, gpu_device, "shaders/cubetex.vert.spv", c.SDL_GPU_SHADERSTAGE_VERTEX);
+    const vert_shader = try loadShader(io, gpu_device, "shaders/cube.vert.spv", c.SDL_GPU_SHADERSTAGE_VERTEX);
     defer c.SDL_ReleaseGPUShader(gpu_device, vert_shader);
 
-    const frag_shader = try loadShader(io, gpu_device, "shaders/cubetex.frag.spv", c.SDL_GPU_SHADERSTAGE_FRAGMENT);
+    const frag_shader = try loadShader(io, gpu_device, "shaders/cube.frag.spv", c.SDL_GPU_SHADERSTAGE_FRAGMENT);
     defer c.SDL_ReleaseGPUShader(gpu_device, frag_shader);
 
     // Geometry
     const vertices = [_]Vertex{
-        // Front face (z = +0.5)
-        .{ .pos = .{ -0.5, -0.5, 0.5 }, .color = .{ 1, 0, 0 }, .uv = .{ 0, 1 } },
-        .{ .pos = .{ 0.5, -0.5, 0.5 }, .color = .{ 0, 1, 0 }, .uv = .{ 1, 1 } },
-        .{ .pos = .{ 0.5, 0.5, 0.5 }, .color = .{ 0, 0, 1 }, .uv = .{ 1, 0 } },
-        .{ .pos = .{ -0.5, 0.5, 0.5 }, .color = .{ 1, 1, 0 }, .uv = .{ 0, 0 } },
-
-        // Right face (x = +0.5)
-        .{ .pos = .{ 0.5, -0.5, 0.5 }, .color = .{ 0, 1, 0 }, .uv = .{ 0, 1 } },
-        .{ .pos = .{ 0.5, -0.5, -0.5 }, .color = .{ 0, 1, 1 }, .uv = .{ 1, 1 } },
-        .{ .pos = .{ 0.5, 0.5, -0.5 }, .color = .{ 1, 1, 1 }, .uv = .{ 1, 0 } },
-        .{ .pos = .{ 0.5, 0.5, 0.5 }, .color = .{ 0, 0, 1 }, .uv = .{ 0, 0 } },
-
-        // Back face (z = -0.5)
-        .{ .pos = .{ 0.5, -0.5, -0.5 }, .color = .{ 0, 1, 1 }, .uv = .{ 0, 1 } },
-        .{ .pos = .{ -0.5, -0.5, -0.5 }, .color = .{ 1, 0, 1 }, .uv = .{ 1, 1 } },
-        .{ .pos = .{ -0.5, 0.5, -0.5 }, .color = .{ 0, 0, 0 }, .uv = .{ 1, 0 } },
-        .{ .pos = .{ 0.5, 0.5, -0.5 }, .color = .{ 1, 1, 1 }, .uv = .{ 0, 0 } },
-
-        // Left face (x = -0.5)
-        .{ .pos = .{ -0.5, -0.5, -0.5 }, .color = .{ 1, 0, 1 }, .uv = .{ 0, 1 } },
-        .{ .pos = .{ -0.5, -0.5, 0.5 }, .color = .{ 1, 0, 0 }, .uv = .{ 1, 1 } },
-        .{ .pos = .{ -0.5, 0.5, 0.5 }, .color = .{ 1, 1, 0 }, .uv = .{ 1, 0 } },
-        .{ .pos = .{ -0.5, 0.5, -0.5 }, .color = .{ 0, 0, 0 }, .uv = .{ 0, 0 } },
-
-        // Bottom face (y = -0.5)
-        .{ .pos = .{ -0.5, -0.5, -0.5 }, .color = .{ 1, 0, 1 }, .uv = .{ 0, 1 } },
-        .{ .pos = .{ 0.5, -0.5, -0.5 }, .color = .{ 0, 1, 1 }, .uv = .{ 1, 1 } },
-        .{ .pos = .{ 0.5, -0.5, 0.5 }, .color = .{ 0, 1, 0 }, .uv = .{ 1, 0 } },
-        .{ .pos = .{ -0.5, -0.5, 0.5 }, .color = .{ 1, 0, 0 }, .uv = .{ 0, 0 } },
-
-        // Top face (y = +0.5)
-        .{ .pos = .{ -0.5, 0.5, 0.5 }, .color = .{ 1, 1, 0 }, .uv = .{ 0, 1 } },
-        .{ .pos = .{ 0.5, 0.5, 0.5 }, .color = .{ 0, 0, 1 }, .uv = .{ 1, 1 } },
-        .{ .pos = .{ 0.5, 0.5, -0.5 }, .color = .{ 1, 1, 1 }, .uv = .{ 1, 0 } },
-        .{ .pos = .{ -0.5, 0.5, -0.5 }, .color = .{ 0, 0, 0 }, .uv = .{ 0, 0 } },
+        .{ .pos = .{ -0.5, -0.5, 0.5 }, .color = .{ 1.0, 0.0, 0.0 } },
+        .{ .pos = .{ 0.5, -0.5, 0.5 }, .color = .{ 0.0, 1.0, 0.0 } },
+        .{ .pos = .{ 0.5, 0.5, 0.5 }, .color = .{ 0.0, 0.0, 1.0 } },
+        .{ .pos = .{ -0.5, 0.5, 0.5 }, .color = .{ 1.0, 1.0, 0.0 } },
+        .{ .pos = .{ -0.5, -0.5, -0.5 }, .color = .{ 1.0, 0.0, 1.0 } },
+        .{ .pos = .{ 0.5, -0.5, -0.5 }, .color = .{ 0.0, 1.0, 1.0 } },
+        .{ .pos = .{ 0.5, 0.5, -0.5 }, .color = .{ 1.0, 1.0, 1.0 } },
+        .{ .pos = .{ -0.5, 0.5, -0.5 }, .color = .{ 0.0, 0.0, 0.0 } },
     };
 
     const indices = [_]u16{
         0, 1, 2, 2, 3, 0, // front
-        4, 5, 6, 6, 7, 4, // right
-        8, 9, 10, 10, 11, 8, // back
-        12, 13, 14, 14, 15, 12, // left
-        16, 17, 18, 18, 19, 16, // bottom
-        20, 21, 22, 22, 23, 20, // top
+        1, 5, 6, 6, 2, 1, // right
+        7, 6, 5, 5, 4, 7, // back
+        4, 0, 3, 3, 7, 4, // left
+        4, 5, 1, 1, 0, 4, // bottom
+        3, 2, 6, 6, 7, 3, // top
     };
 
     // Create GPU buffers
@@ -409,12 +397,10 @@ pub fn main(init: std.process.Init) !void {
     binding.pitch = @sizeOf(Vertex);
     binding.input_rate = c.SDL_GPU_VERTEXINPUTRATE_VERTEX;
 
-    var attrs: [3]c.SDL_GPUVertexAttribute = .{
-        std.mem.zeroes(c.SDL_GPUVertexAttribute),
+    var attrs: [2]c.SDL_GPUVertexAttribute = .{
         std.mem.zeroes(c.SDL_GPUVertexAttribute),
         std.mem.zeroes(c.SDL_GPUVertexAttribute),
     };
-
     attrs[0].location = 0;
     attrs[0].buffer_slot = 0;
     attrs[0].format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
@@ -425,15 +411,10 @@ pub fn main(init: std.process.Init) !void {
     attrs[1].format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT3;
     attrs[1].offset = @offsetOf(Vertex, "color");
 
-    attrs[2].location = 2;
-    attrs[2].buffer_slot = 0;
-    attrs[2].format = c.SDL_GPU_VERTEXELEMENTFORMAT_FLOAT2;
-    attrs[2].offset = @offsetOf(Vertex, "uv");
-
-    pipeline_info.vertex_input_state.vertex_buffer_descriptions = &binding; //missing?
+    pipeline_info.vertex_input_state.vertex_buffer_descriptions = &binding;
+    pipeline_info.vertex_input_state.num_vertex_buffers = 1;
     pipeline_info.vertex_input_state.vertex_attributes = &attrs;
-    pipeline_info.vertex_input_state.num_vertex_attributes = 3;
-    pipeline_info.vertex_input_state.num_vertex_buffers = 1; // missing?
+    pipeline_info.vertex_input_state.num_vertex_attributes = 2;
 
     // Color target
     var color_target = std.mem.zeroes(c.SDL_GPUColorTargetDescription);
@@ -529,15 +510,6 @@ pub fn main(init: std.process.Init) !void {
 
             var ibind = c.SDL_GPUBufferBinding{ .buffer = index_buffer, .offset = 0 };
             c.SDL_BindGPUIndexBuffer(render_pass, &ibind, c.SDL_GPU_INDEXELEMENTSIZE_16BIT);
-
-            //-----------------------------------
-            // Bind texture + sampler
-            var tex_bind = c.SDL_GPUTextureSamplerBinding{
-                .texture = ctexture,
-                .sampler = sampler,
-            };
-            c.SDL_BindGPUFragmentSamplers(render_pass, 0, &tex_bind, 1);
-            //-----------------------------------
 
             // Push uniform
             // const mvp = createMVP(angle);
