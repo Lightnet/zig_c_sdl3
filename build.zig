@@ -68,4 +68,71 @@ pub fn build(b: *std.Build) void {
     }
 
     run_step.dependOn(&run_cmd.step);
+
+    // 1. Define your array of samples here
+    const samples = [_][]const u8{
+        // "main",
+        // "sample00",
+        // "scriptlua",
+        // "sdl_window",
+        // "sdl_dx11",
+        "sdl_dx12",
+    };
+
+    // 2. Loop through the array to generate steps for each sample
+    for (samples) |sample_name| {
+        // Construct the source path dynamically (e.g., "src/main.zig")
+        const source_path = b.fmt("src/{s}.zig", .{sample_name});
+
+        const exe_app = b.addExecutable(.{
+            .name = b.fmt("zig_sdl3_{s}", .{sample_name}),
+            .root_module = b.createModule(.{
+                .root_source_file = b.path(source_path),
+                .target = target,
+                .optimize = optimize,
+                .link_libc = true,
+            }),
+        });
+
+        // Set up SDL3 search paths
+        exe_app.root_module.addIncludePath(sdl_bin_dep.path("x86_64-w64-mingw32/include"));
+        exe_app.root_module.addLibraryPath(sdl_bin_dep.path("x86_64-w64-mingw32/lib"));
+        exe_app.root_module.addLibraryPath(sdl_bin_dep.path("x86_64-w64-mingw32/bin"));
+
+        // Link library dependencies
+        exe_app.root_module.linkSystemLibrary("SDL3", .{});
+
+        // Register standard installation step
+        const install_artifact = b.addInstallArtifact(exe_app, .{});
+        b.getInstallStep().dependOn(&install_artifact.step);
+
+        // Copy runtime DLL if on Windows
+        const etarget_info = target.result;
+        if (etarget_info.os.tag == .windows) {
+            const dll_name = b.fmt("{s}.dll", .{sample_name}); // Prevents collision if running multiple rules
+            _ = dll_name;
+
+            const install_dll = b.addInstallFileWithDir(
+                sdl_bin_dep.path("x86_64-w64-mingw32/bin/SDL3.dll"),
+                .bin,
+                "SDL3.dll",
+            );
+            b.getInstallStep().dependOn(&install_dll.step);
+        }
+
+        // 3. Create a unique run step for this specific sample
+        const step_name = b.fmt("run-{s}", .{sample_name});
+        const step_desc = b.fmt("Run the {s} sample", .{sample_name});
+
+        const erun_step = b.step(step_name, step_desc);
+        const erun_cmd = b.addRunArtifact(exe_app);
+
+        // Ensure everything installs before running
+        erun_cmd.step.dependOn(b.getInstallStep());
+
+        if (b.args) |args| {
+            erun_cmd.addArgs(args);
+        }
+        erun_step.dependOn(&erun_cmd.step);
+    }
 }

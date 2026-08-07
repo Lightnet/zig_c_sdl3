@@ -35,6 +35,27 @@ glslc shaders/cube.frag -o shaders/cube.frag.spv
 ```
  - compile shaders
 
+# dx12
+```
+# Compile Vertex Shader (-T vs_6_0 means Vertex Shader model 6.0)
+dxc -T vs_6_0 -E VSMain shaders/shaders.hlsl -Fo src/vs.dxil
+
+# Compile Pixel/Fragment Shader (-T ps_6_0 means Pixel Shader model 6.0)
+dxc -T ps_6_0 -E PSMain shaders/shaders.hlsl -Fo src/ps.dxil
+```
+
+## tests
+```
+dxc -T vs_6_0 -E VSMain -Fo src/vs.dxil shaders/shaders.hlsl
+dxc -T ps_6_0 -E PSMain -Fo src/ps.dxil shaders/shaders.hlsl
+```
+
+```
+dxc -T vs_6_0 -E main -Fo build/cube.vert.dxil shaders/cube.vert.hlsl
+dxc -T ps_6_0 -E main -Fo build/cube.frag.dxil shaders/cube.frag.hlsl
+```
+
+
 # Repo:
 ```
 zig fetch --save=sdl https://github.com/libsdl-org/SDL/releases/download/release-3.4.12/SDL3-devel-3.4.12-mingw.zip
