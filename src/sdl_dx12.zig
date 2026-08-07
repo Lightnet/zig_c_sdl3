@@ -18,7 +18,8 @@ const Vertex = extern struct {
 };
 
 const UniformBlock = struct {
-    mvp: math.Mat4,
+    // Maps perfectly to float mvp[16] in HLSL
+    mvp: [16]f32,
 };
 
 pub fn main() !void {
@@ -218,18 +219,56 @@ pub fn main() !void {
         // time_ticks += 0.015;
         time_ticks += 0.0001;
 
-        // 1. Create your component matrices
-        const proj = math.Mat4.perspective(45.0 * (std.math.pi / 180.0), 800.0 / 600.0, 0.1, 100.0);
-        const view = math.Mat4.translation(0.0, 0.0, -10.0); // Move camera back 5 units
+        //const model = math.Mat4.identity();
         const model = math.Mat4.rotate(time_ticks, .{ .x = 0.5, .y = 1.0, .z = 0.0 });
 
-        // 2. Multiply them in standard Projection * View * Model order
-        const view_model = math.Mat4.multiply(view, model);
-        const mvp = math.Mat4.multiply(proj, view_model);
+        const view = math.Mat4.translation(0.0, 0.0, -5.0); // now uses m[12..14]
+        const proj = math.Mat4.perspective(45.0 * (std.math.pi / 180.0), 800.0 / 600.0, 0.1, 100.0);
 
-        // 3. CRITICAL: Transpose so the Row-Major Zig struct layouts
-        // align perfectly with HLSL's expected Column-Major register data reading.
-        const uniforms = UniformBlock{ .mvp = mvp.transpose() };
+        const mv = math.Mat4.multiply(model, view);
+        const mvp = math.Mat4.multiply(mv, proj);
+
+        const uniforms = UniformBlock{ .mvp = mvp.m };
+
+        //--------------------------------------
+        // No rotation, cube at origin, camera pulled back
+        // const model = math.Mat4.identity();
+        // const view = math.Mat4.translation(0.0, 0.0, -6.0);
+        // const proj = math.Mat4.perspective(45.0 * (std.math.pi / 180.0), 800.0 / 600.0, 0.1, 100.0);
+
+        // const mv = math.Mat4.multiply(model, view);
+        // const mvp = math.Mat4.multiply(mv, proj);
+
+        // std.log.info("MVP[0..4]  = {d:.3} {d:.3} {d:.3} {d:.3}", .{ mvp.m[0], mvp.m[1], mvp.m[2], mvp.m[3] });
+        // std.log.info("MVP[4..8]  = {d:.3} {d:.3} {d:.3} {d:.3}", .{ mvp.m[4], mvp.m[5], mvp.m[6], mvp.m[7] });
+        // std.log.info("MVP[8..12] = {d:.3} {d:.3} {d:.3} {d:.3}", .{ mvp.m[8], mvp.m[9], mvp.m[10], mvp.m[11] });
+        // std.log.info("MVP[12..16]= {d:.3} {d:.3} {d:.3} {d:.3}", .{ mvp.m[12], mvp.m[13], mvp.m[14], mvp.m[15] });
+
+        // const uniforms = UniformBlock{ .mvp = mvp.m };
+        //--------------------------------------
+
+        // const proj = math.Mat4.perspective(45.0 * (std.math.pi / 180.0), 800.0 / 600.0, 0.1, 100.0);
+        // const view = math.Mat4.translation(0.0, 0.0, -5.0);
+        // const model = math.Mat4.rotate(time_ticks, .{ .x = 0.5, .y = 1.0, .z = 0.0 });
+
+        // // 1. Right-to-Left compilation sequence
+        // const model_view = math.Mat4.multiply(model, view);
+        // const mvp = math.Mat4.multiply(model_view, proj);
+
+        // // 2. Pass straight to your uniforms block. No extra math steps required!
+        // const uniforms = UniformBlock{ .mvp = mvp.m };
+
+        // 1. Create your component matrices
+        // const proj = math.Mat4.perspective(45.0 * (std.math.pi / 180.0), 800.0 / 600.0, 0.1, 100.0);
+        // const view = math.Mat4.translation(0.0, 0.0, -5.0);
+        // const model = math.Mat4.rotate(time_ticks, .{ .x = 0.5, .y = 1.0, .z = 0.0 });
+
+        // // 2. Multiply them
+        // const view_model = math.Mat4.multiply(view, model);
+        // const mvp = math.Mat4.multiply(proj, view_model);
+
+        // // 3. Directly assign it! No more .transpose() needed.
+        // const uniforms = UniformBlock{ .mvp = mvp.transpose().m };
 
         //---------------------------------------
         const render_cmd = c.SDL_AcquireGPUCommandBuffer(gpu_device) orelse continue;
