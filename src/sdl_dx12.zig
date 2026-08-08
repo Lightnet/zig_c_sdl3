@@ -22,6 +22,39 @@ const UniformBlock = struct {
     mvp: [16]f32,
 };
 
+// helper
+// 1. The Helper Function
+fn recreateDepthTexture(device: *c.SDL_GPUDevice, texture_ptr: *?*c.SDL_GPUTexture, w: u32, h: u32) void {
+    // Release old texture if it exists using the pointer
+    if (texture_ptr.*) |t| {
+        c.SDL_ReleaseGPUTexture(device, t);
+    }
+
+    var format = c.SDL_GPU_TEXTUREFORMAT_D32_FLOAT;
+
+    // Explicitly cast 'format' to match the expected parameter type (c_uint)
+    if (!c.SDL_GPUTextureSupportsFormat(device, @intCast(format), // <-- Added type cast here
+        c.SDL_GPU_TEXTURETYPE_2D, c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET))
+    {
+        format = c.SDL_GPU_TEXTUREFORMAT_D24_UNORM_S8_UINT;
+    }
+
+    const desc = c.SDL_GPUTextureCreateInfo{
+        .type = c.SDL_GPU_TEXTURETYPE_2D,
+        .format = @intCast(format), // <-- Added type cast here as well
+        .usage = c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
+        .width = w,
+        .height = h,
+        .layer_count_or_depth = 1,
+        .num_levels = 1,
+        .sample_count = c.SDL_GPU_SAMPLECOUNT_1,
+        .props = 0,
+    };
+
+    // Assign the new texture directly to the original variable
+    texture_ptr.* = c.SDL_CreateGPUTexture(device, &desc);
+}
+
 pub fn main() !void {
     if (!c.SDL_Init(c.SDL_INIT_VIDEO)) return error.SDLInitFailed;
     defer c.SDL_Quit();
@@ -35,6 +68,10 @@ pub fn main() !void {
 
     if (!c.SDL_ClaimWindowForGPUDevice(gpu_device, window)) return error.WindowClaim;
     defer c.SDL_ReleaseWindowFromGPUDevice(gpu_device, window);
+
+    var depth_w: u32 = 800;
+    var depth_h: u32 = 600;
+    var depth_texture: ?*c.SDL_GPUTexture = null;
 
     // --- Geometry Data Definitions ---
     const vertices = [_]Vertex{
@@ -222,8 +259,10 @@ pub fn main() !void {
         .sample_count = c.SDL_GPU_SAMPLECOUNT_1,
         .props = 0,
     };
-
-    const depth_texture = c.SDL_CreateGPUTexture(gpu_device, &depth_texture_desc) orelse {
+    depth_h = 600;
+    depth_w = 800;
+    //create texture depth for resize later if event trigger
+    depth_texture = c.SDL_CreateGPUTexture(gpu_device, &depth_texture_desc) orelse {
         std.log.err("Failed to create depth texture: {s}", .{c.SDL_GetError()});
         return error.DepthTextureCreationFailed;
     };
@@ -246,6 +285,15 @@ pub fn main() !void {
         var event: c.SDL_Event = undefined;
         while (c.SDL_PollEvent(&event)) {
             if (event.type == c.SDL_EVENT_QUIT) quit = true;
+
+            if (event.type == c.SDL_EVENT_WINDOW_RESIZED) {
+                depth_w = @intCast(event.window.data1);
+                depth_h = @intCast(event.window.data2);
+
+                std.log.debug("RESIZE {}x{}", .{ depth_w, depth_h });
+
+                recreateDepthTexture(gpu_device, &depth_texture, depth_w, depth_h);
+            }
         }
 
         // time_ticks += 0.015;
