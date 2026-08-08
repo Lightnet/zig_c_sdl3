@@ -47,10 +47,19 @@ pub fn main() !void {
         .{ .pos = .{ 0.5, 0.5, -0.5 }, .color = .{ 1, 1, 1, 1 } },
         .{ .pos = .{ -0.5, 0.5, -0.5 }, .color = .{ 0, 0, 0, 1 } },
     };
+    // const indices = [_]u16{
+    //     0, 1, 2, 2, 3, 0, 1, 5, 6, 6, 2, 1,
+    //     7, 6, 5, 5, 4, 7, 4, 0, 3, 3, 7, 4,
+    //     4, 5, 1, 1, 0, 4, 3, 2, 6, 6, 7, 3,
+    // };
+
     const indices = [_]u16{
-        0, 1, 2, 2, 3, 0, 1, 5, 6, 6, 2, 1,
-        7, 6, 5, 5, 4, 7, 4, 0, 3, 3, 7, 4,
-        4, 5, 1, 1, 0, 4, 3, 2, 6, 6, 7, 3,
+        0, 1, 2, 2, 3, 0, // Front Face (CCW)
+        1, 5, 6, 6, 2, 1, // Right Face (CCW)
+        7, 6, 5, 5, 4, 7, // Back Face  (CCW)
+        4, 0, 3, 3, 7, 4, // Left Face  (CCW)
+        4, 5, 1, 1, 0, 4, // Bottom Face(CCW)
+        3, 7, 6, 6, 2, 3, // Top Face   (Fixed to CCW, originally: 3, 2, 6, 6, 7, 3)
     };
 
     // --- GPU Buffer Creation ---
@@ -153,8 +162,9 @@ pub fn main() !void {
     const target_info = c.SDL_GPUGraphicsPipelineTargetInfo{
         .color_target_descriptions = &color_target_desc,
         .num_color_targets = 1,
-        .has_depth_stencil_target = false,
-        .depth_stencil_format = c.SDL_GPU_TEXTUREFORMAT_INVALID,
+        .has_depth_stencil_target = true,
+        // .depth_stencil_format = c.SDL_GPU_TEXTUREFORMAT_INVALID,
+        .depth_stencil_format = c.SDL_GPU_TEXTUREFORMAT_D32_FLOAT, // depth format
     };
 
     // 4. Instantiate the final creation description using clean structural literals.
@@ -182,13 +192,16 @@ pub fn main() !void {
             .enable_mask = false,
         },
         .depth_stencil_state = .{
-            .compare_op = c.SDL_GPU_COMPAREOP_ALWAYS,
+            // .compare_op = c.SDL_GPU_COMPAREOP_ALWAYS, // nope
+            .compare_op = c.SDL_GPU_COMPAREOP_LESS, // or LESS_OR_EQUAL
             .back_stencil_state = std.mem.zeroes(c.SDL_GPUStencilOpState),
             .front_stencil_state = std.mem.zeroes(c.SDL_GPUStencilOpState),
             .compare_mask = 0,
             .write_mask = 0,
-            .enable_depth_test = false,
-            .enable_depth_write = false,
+            // .enable_depth_test = false,
+            // .enable_depth_write = false,
+            .enable_depth_test = true, // Set to true
+            .enable_depth_write = true, // Set to true
             .enable_stencil_test = false,
             .padding1 = 0,
             .padding2 = 0,
@@ -197,6 +210,25 @@ pub fn main() !void {
         .target_info = target_info,
         .props = 0,
     };
+
+    const depth_texture_desc = c.SDL_GPUTextureCreateInfo{
+        .type = c.SDL_GPU_TEXTURETYPE_2D,
+        .format = c.SDL_GPU_TEXTUREFORMAT_D32_FLOAT,
+        .usage = c.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
+        .width = @intCast(800),
+        .height = @intCast(600),
+        .layer_count_or_depth = 1,
+        .num_levels = 1,
+        .sample_count = c.SDL_GPU_SAMPLECOUNT_1,
+        .props = 0,
+    };
+
+    const depth_texture = c.SDL_CreateGPUTexture(gpu_device, &depth_texture_desc) orelse {
+        std.log.err("Failed to create depth texture: {s}", .{c.SDL_GetError()});
+        return error.DepthTextureCreationFailed;
+    };
+    // Clean it up at the very end of your program (where you release vertex_buf)
+    defer c.SDL_ReleaseGPUTexture(gpu_device, depth_texture); // when shutting down!
 
     // 5. Fire off the creation call
     const pipeline = c.SDL_CreateGPUGraphicsPipeline(gpu_device, &pip_info) orelse {
@@ -230,46 +262,6 @@ pub fn main() !void {
 
         const uniforms = UniformBlock{ .mvp = mvp.m };
 
-        //--------------------------------------
-        // No rotation, cube at origin, camera pulled back
-        // const model = math.Mat4.identity();
-        // const view = math.Mat4.translation(0.0, 0.0, -6.0);
-        // const proj = math.Mat4.perspective(45.0 * (std.math.pi / 180.0), 800.0 / 600.0, 0.1, 100.0);
-
-        // const mv = math.Mat4.multiply(model, view);
-        // const mvp = math.Mat4.multiply(mv, proj);
-
-        // std.log.info("MVP[0..4]  = {d:.3} {d:.3} {d:.3} {d:.3}", .{ mvp.m[0], mvp.m[1], mvp.m[2], mvp.m[3] });
-        // std.log.info("MVP[4..8]  = {d:.3} {d:.3} {d:.3} {d:.3}", .{ mvp.m[4], mvp.m[5], mvp.m[6], mvp.m[7] });
-        // std.log.info("MVP[8..12] = {d:.3} {d:.3} {d:.3} {d:.3}", .{ mvp.m[8], mvp.m[9], mvp.m[10], mvp.m[11] });
-        // std.log.info("MVP[12..16]= {d:.3} {d:.3} {d:.3} {d:.3}", .{ mvp.m[12], mvp.m[13], mvp.m[14], mvp.m[15] });
-
-        // const uniforms = UniformBlock{ .mvp = mvp.m };
-        //--------------------------------------
-
-        // const proj = math.Mat4.perspective(45.0 * (std.math.pi / 180.0), 800.0 / 600.0, 0.1, 100.0);
-        // const view = math.Mat4.translation(0.0, 0.0, -5.0);
-        // const model = math.Mat4.rotate(time_ticks, .{ .x = 0.5, .y = 1.0, .z = 0.0 });
-
-        // // 1. Right-to-Left compilation sequence
-        // const model_view = math.Mat4.multiply(model, view);
-        // const mvp = math.Mat4.multiply(model_view, proj);
-
-        // // 2. Pass straight to your uniforms block. No extra math steps required!
-        // const uniforms = UniformBlock{ .mvp = mvp.m };
-
-        // 1. Create your component matrices
-        // const proj = math.Mat4.perspective(45.0 * (std.math.pi / 180.0), 800.0 / 600.0, 0.1, 100.0);
-        // const view = math.Mat4.translation(0.0, 0.0, -5.0);
-        // const model = math.Mat4.rotate(time_ticks, .{ .x = 0.5, .y = 1.0, .z = 0.0 });
-
-        // // 2. Multiply them
-        // const view_model = math.Mat4.multiply(view, model);
-        // const mvp = math.Mat4.multiply(proj, view_model);
-
-        // // 3. Directly assign it! No more .transpose() needed.
-        // const uniforms = UniformBlock{ .mvp = mvp.transpose().m };
-
         //---------------------------------------
         const render_cmd = c.SDL_AcquireGPUCommandBuffer(gpu_device) orelse continue;
 
@@ -290,7 +282,28 @@ pub fn main() !void {
             // defer c.SDL_ReleaseGPUGraphicsPipeline(gpu_device, pipeline);
 
             var color_target = c.SDL_GPUColorTargetInfo{ .texture = tex, .clear_color = .{ .r = 0.1, .g = 0.1, .b = 0.15, .a = 1.0 }, .load_op = c.SDL_GPU_LOADOP_CLEAR, .store_op = c.SDL_GPU_STOREOP_STORE };
-            const render_pass = c.SDL_BeginGPURenderPass(render_cmd, &color_target, 1, null) orelse {
+
+            // --- PLACE THIS DEPTH TARGET CONFIGURATION HERE ---
+            var depth_target = c.SDL_GPUDepthStencilTargetInfo{
+                .texture = depth_texture, // Points to the texture created in init
+                .clear_depth = 1.0, // Clears depth buffer to furthest distance
+                .load_op = c.SDL_GPU_LOADOP_CLEAR, // Force clear every frame
+                .store_op = c.SDL_GPU_STOREOP_DONT_CARE,
+                .stencil_load_op = c.SDL_GPU_LOADOP_DONT_CARE,
+                .stencil_store_op = c.SDL_GPU_STOREOP_DONT_CARE,
+                .clear_stencil = 0,
+                .cycle = false, // Set to true if updating depth texture data while in-flight, otherwise false
+                // .padding1 = 0,
+                // .padding2 = 0,
+            };
+
+            // const render_pass = c.SDL_BeginGPURenderPass(render_cmd, &color_target, 1, null) orelse {
+            //     _ = c.SDL_SubmitGPUCommandBuffer(render_cmd);
+            //     continue;
+            // };
+
+            // --- UPDATE THIS CALL: Pass &depth_target instead of null ---
+            const render_pass = c.SDL_BeginGPURenderPass(render_cmd, &color_target, 1, &depth_target) orelse {
                 _ = c.SDL_SubmitGPUCommandBuffer(render_cmd);
                 continue;
             };
